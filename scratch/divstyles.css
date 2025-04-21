@@ -1,0 +1,35 @@
+.common{ 
+    /* border: 2px solid white; */
+
+    position: absolute;
+}
+ .nav{ 
+    position: relative; 
+    float: right;
+ } 
+ .footer{ 
+    bottom: 0px; 
+    left: 0px; 
+    right: 0px; 
+    font: 50%; 
+    font-style: italic; 
+    text-align: center; 
+    background-color: rgb(122, 169, 159, 0.5 ) 
+    
+
+ } 
+ .header{ 
+    top: 0px;
+    left: 0px;
+    right: 0px; 
+    text-align: center;  
+    z-index: -1;
+ } 
+ .content{ 
+    top: 51px;
+    left: 10%; 
+    right: 10%;   
+    background-color: rgba(72, 120, 161, 0.45) ;
+    bottom: 30px   
+     
+ }

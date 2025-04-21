@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkiFree Lite - Chasers!</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #ffffff;
+            margin: 0;
+            font-family: 'Press Start 2P', cursive;
+            overflow: hidden;
+            flex-direction: column;
+        }
+
+        #gameContainer {
+            position: relative;
+            border: 5px solid #333;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+            background-color: transparent;
+            width: 90vw;
+            max-width: 600px;
+            height: 80vh;
+            max-height: 800px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background-color: #ffffff;
+            background-image: radial-gradient(#ddeeff 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        #messageBox {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 1.5em;
+            display: none;
+            z-index: 10;
+            border: 3px solid white;
+        }
+
+         #messageBox button {
+             font-family: 'Press Start 2P', cursive;
+             padding: 10px 20px;
+             margin-top: 20px;
+             font-size: 0.8em;
+             cursor: pointer;
+             background-color: #ffcc00;
+             border: 2px solid #333;
+             border-radius: 5px;
+             box-shadow: 3px 3px 0 #333;
+             transition: background-color 0.2s, box-shadow 0.2s, transform 0.1s;
+         }
+
+         #messageBox button:active {
+             background-color: #e6b800;
+             box-shadow: 1px 1px 0 #333;
+             transform: translate(2px, 2px);
+         }
+
+        #scoreBoard {
+            margin-top: 15px;
+            font-size: 1.2em;
+            color: #333;
+            text-shadow: 1px 1px 0px #ccc;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="messageBox">
+            <p id="messageText"></p>
+            <button id="restartButton">Restart</button>
+        </div>
+    </div>
+    <div id="scoreBoard">Score: 0</div>
+
+    <script>
+        // --- Game Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameContainer = document.getElementById('gameContainer');
+        const scoreBoard = document.getElementById('scoreBoard');
+        const messageBox = document.getElementById('messageBox');
+        const messageText = document.getElementById('messageText');
+        const restartButton = document.getElementById('restartButton');
+
+        let score = 0;
+        let baseGameSpeed = 3;
+        let gameSpeed = baseGameSpeed;
+        let obstacleFrequency = 0.985;
+        let gameOver = false;
+        let animationFrameId;
+        let obstacles = [];
+        let keysPressed = {};
+
+        // --- Skier Setup ---
+        const skier = {
+            x: 0,
+            y: 50,
+            width: 30,
+            height: 40,
+            velocityX: 0,
+            maxSpeed: 6,
+            acceleration: 0.6,
+            friction: 0.92,
+            isJumping: false,
+            jumpHeight: 75, // Lowered jump height from 100 to 75
+            jumpDuration: 700,
+            jumpTimer: 0,
+            emoji: '⛷️'
+        };
+
+        // --- Obstacle Types ---
+        const obstacleTypes = [
+            { emoji: '🌲', width: 30, height: 40, type: 'tree', points: 1 },
+            { emoji: '🌲', width: 30, height: 40, type: 'tree', points: 1 },
+            { emoji: '🧍', width: 30, height: 40, type: 'skier', points: 1, showBubble: false, bubbleTimer: 0, bubbleDuration: 1800, bubbleTriggered: false, isChasing: false, chaseSpeed: 1.5 },
+            { emoji: '🪨', width: 25, height: 25, type: 'rock', points: 1, jumpPoints: 2 }
+        ];
+
+        // --- Utility Functions ---
+        function resizeCanvas() {
+            canvas.width = gameContainer.clientWidth;
+            canvas.height = gameContainer.clientHeight;
+            skier.x = canvas.width / 2 - skier.width / 2;
+            const baseFontSize = 24;
+            const scaleFactor = canvas.width / 600;
+            ctx.font = `${baseFontSize * Math.max(0.8, scaleFactor)}px 'Press Start 2P'`;
+        }
+
+        function getRandomInt(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+
+        function drawText(text, x, y, color = 'black', align = 'center', fontSize = null) {
+            ctx.fillStyle = color;
+            ctx.textAlign = align;
+            const originalFont = ctx.font;
+            if (fontSize) {
+                const fontArgs = ctx.font.split(' ');
+                ctx.font = `${fontSize}px ${fontArgs[fontArgs.length -1]}`;
+            }
+            ctx.fillText(text, x, y);
+            if (fontSize) {
+                ctx.font = originalFont;
+            }
+         }
+
+        // --- Game Logic Functions ---
+        function spawnObstacle() {
+            if (Math.random() > obstacleFrequency && !gameOver) {
+                const typeIndex = getRandomInt(0, obstacleTypes.length - 1);
+                const typeInfo = obstacleTypes[typeIndex];
+
+                const obstacle = {
+                    ...typeInfo, // Copy properties
+                    x: getRandomInt(10, canvas.width - typeInfo.width - 10),
+                    y: canvas.height,
+                    passed: false,
+                    // Reset dynamic properties
+                    showBubble: typeInfo.type === 'skier' ? false : undefined,
+                    bubbleTimer: typeInfo.type === 'skier' ? 0 : undefined,
+                    bubbleTriggered: typeInfo.type === 'skier' ? false : undefined,
+                    isChasing: typeInfo.type === 'skier' ? false : undefined,
+                };
+                obstacles.push(obstacle);
+            }
+        }
+
+        function updateObstacles() {
+            const now = Date.now();
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obs = obstacles[i];
+                obs.y -= gameSpeed; // Move obstacles up vertically
+
+                // --- Chasing Logic ---
+                if (obs.isChasing) {
+                    if (skier.x + skier.width / 2 > obs.x + obs.width / 2) {
+                        obs.x += obs.chaseSpeed;
+                    } else if (skier.x + skier.width / 2 < obs.x + obs.width / 2) {
+                        obs.x -= obs.chaseSpeed;
+                    }
+                    obs.x = Math.max(0, Math.min(canvas.width - obs.width, obs.x));
+                }
+
+                // --- Speech Bubble Trigger & Chasing Activation ---
+                if (obs.type === 'skier' && !gameOver) {
+                    if (!obs.bubbleTriggered && !obs.showBubble) {
+                        if (obs.y < skier.y + skier.height + 150 && obs.y + obs.height > skier.y) {
+                            obs.showBubble = true;
+                            obs.bubbleTimer = now;
+                            obs.bubbleTriggered = true;
+                        }
+                    }
+                    if (obs.showBubble && (now - obs.bubbleTimer > obs.bubbleDuration)) {
+                        obs.showBubble = false;
+                        obs.isChasing = true;
+                    }
+                }
+
+                // --- Scoring Logic ---
+                if (!obs.passed && obs.y + obs.height < skier.y && !gameOver) {
+                    if (!(skier.isJumping && obs.type === 'rock')) {
+                        score += obs.points;
+                    }
+                    obs.passed = true;
+                    updateScore();
+                }
+
+                // Remove obstacles that are off-screen
+                if (obs.y + obs.height < -20) {
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+        function updateSkier() {
+            // --- Smoother Horizontal Movement ---
+            if (keysPressed['ArrowLeft'] || keysPressed['a']) {
+                skier.velocityX -= skier.acceleration;
+            } else if (keysPressed['ArrowRight'] || keysPressed['d']) {
+                skier.velocityX += skier.acceleration;
+            } else {
+                skier.velocityX *= skier.friction;
+            }
+            skier.velocityX = Math.max(-skier.maxSpeed, Math.min(skier.maxSpeed, skier.velocityX));
+            if (!keysPressed['ArrowLeft'] && !keysPressed['a'] && !keysPressed['ArrowRight'] && !keysPressed['d'] && Math.abs(skier.velocityX) < 0.1) {
+                 skier.velocityX = 0;
+            }
+            skier.x += skier.velocityX;
+            // Boundary checks
+            if (skier.x < 0) {
+                skier.x = 0;
+                skier.velocityX = 0;
+            }
+            if (skier.x + skier.width > canvas.width) {
+                skier.x = canvas.width - skier.width;
+                skier.velocityX = 0;
+            }
+
+            // --- Jump Logic ---
+            if (skier.isJumping) {
+                const jumpProgress = (Date.now() - skier.jumpTimer) / skier.jumpDuration;
+                if (jumpProgress >= 1) {
+                    skier.isJumping = false;
+                    skier.y = 50; // Reset Y position
+                } else {
+                    const jumpPhase = Math.sin(jumpProgress * Math.PI);
+                    skier.y = 50 - jumpPhase * skier.jumpHeight; // Uses updated jumpHeight
+                }
+            } else {
+                 skier.y = 50;
+            }
+        }
+
+
+        function detectCollisions() {
+            if (gameOver) return;
+
+            const skierBottom = skier.y + skier.height;
+            const skierTop = skier.y;
+            const skierLeft = skier.x;
+            const skierRight = skier.x + skier.width;
+
+            for (const obs of obstacles) {
+                const obsBottom = obs.y + obs.height;
+                const obsTop = obs.y;
+                const obsLeft = obs.x;
+                const obsRight = obs.x + obs.width;
+
+                if (skierLeft < obsRight && skierRight > obsLeft && skierTop < obsBottom && skierBottom > obsTop) {
+                    if (skier.isJumping) {
+                        // Jumping: Immune, check rock bonus
+                        if (obs.type === 'rock' && !obs.passed) {
+                             if (skierBottom < obsTop + obs.height / 2) { // Check height for bonus
+                                score += obs.jumpPoints;
+                                obs.passed = true;
+                                updateScore();
+                             }
+                        }
+                        // No endGame() if jumping
+                    } else {
+                        // Not Jumping: Collision ends game
+                        endGame();
+                        return;
+                    }
+                }
+            }
+        }
+
+
+        function updateScore() {
+            scoreBoard.textContent = `Score: ${score}`;
+            increaseDifficulty();
+        }
+
+        function increaseDifficulty() {
+             const scoreMilestoneFactor = Math.floor(score / 10);
+             gameSpeed = baseGameSpeed + scoreMilestoneFactor * 0.4;
+             obstacleTypes.find(t => t.type === 'skier').chaseSpeed = 1.5 + scoreMilestoneFactor * 0.1;
+        }
+
+        // --- Drawing Functions ---
+        function drawSkier() {
+            ctx.save();
+
+            let rotationAngle = 0;
+            if (skier.isJumping) {
+                const jumpProgress = Math.min(1, (Date.now() - skier.jumpTimer) / skier.jumpDuration);
+                rotationAngle = jumpProgress * 2 * Math.PI; // Full 360 rotation over jump duration
+
+                ctx.translate(skier.x + skier.width / 2, skier.y + skier.height / 2);
+                ctx.rotate(rotationAngle);
+                ctx.translate(-(skier.x + skier.width / 2), -(skier.y + skier.height / 2));
+            }
+
+            const baseFontSize = 24;
+            const scaleFactor = canvas.width / 600;
+            const dynamicFontSize = baseFontSize * Math.max(0.8, scaleFactor);
+            ctx.font = `${dynamicFontSize}px 'Press Start 2P'`;
+
+            drawText(skier.emoji, skier.x, skier.y + skier.height, 'black', 'left');
+
+            ctx.restore();
+        }
+
+        function drawObstacles() {
+            const baseFontSize = 24;
+            const scaleFactor = canvas.width / 600;
+            const dynamicFontSize = baseFontSize * Math.max(0.8, scaleFactor);
+            ctx.font = `${dynamicFontSize}px 'Press Start 2P'`;
+
+            const now = Date.now();
+
+            obstacles.forEach(obs => {
+                drawText(obs.emoji, obs.x, obs.y + obs.height, 'black', 'left');
+
+                if (obs.type === 'skier' && obs.showBubble && (now - obs.bubbleTimer < obs.bubbleDuration)) {
+                    const bubbleText = "slow down!";
+                    const bubbleFontSize = dynamicFontSize * 0.5;
+
+                    const originalFont = ctx.font;
+                    ctx.font = `${bubbleFontSize}px 'Press Start 2P'`;
+                    const textMetrics = ctx.measureText(bubbleText);
+                    const textWidth = textMetrics.width;
+                    ctx.font = originalFont;
+
+                    const bubbleX = obs.x + obs.width / 2;
+                    const bubbleY = obs.y - 5;
+                    const padding = 5;
+                    const bubbleHeight = bubbleFontSize + padding * 2;
+                    const bubbleTotalWidth = textWidth + padding * 2;
+
+                    ctx.fillStyle = 'white';
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 1;
+                    ctx.fillRect(bubbleX - bubbleTotalWidth / 2, bubbleY - bubbleHeight + padding, bubbleTotalWidth, bubbleHeight);
+                    ctx.strokeRect(bubbleX - bubbleTotalWidth / 2, bubbleY - bubbleHeight + padding, bubbleTotalWidth, bubbleHeight);
+                    drawText(bubbleText, bubbleX, bubbleY, 'black', 'center', bubbleFontSize);
+                }
+            });
+             ctx.font = `${dynamicFontSize}px 'Press Start 2P'`;
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // --- Game Loop ---
+        function gameLoop() {
+            if (gameOver) return;
+
+            clearCanvas();
+            updateSkier();
+            spawnObstacle();
+            updateObstacles();
+            drawSkier();
+            drawObstacles();
+            detectCollisions();
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Game State Functions ---
+         function showMessage(msg) {
+            messageText.textContent = msg;
+            messageBox.style.display = 'block';
+            restartButton.focus();
+        }
+
+        function hideMessage() {
+            messageBox.style.display = 'none';
+        }
+
+        function startGame() {
+            console.log("Starting game...");
+            score = 0;
+            gameSpeed = baseGameSpeed;
+            obstacles = [];
+            gameOver = false;
+            keysPressed = {};
+            skier.isJumping = false;
+            skier.velocityX = 0;
+            skier.x = canvas.width / 2 - skier.width / 2;
+            skier.y = 50;
+            obstacleFrequency = 0.985;
+             obstacleTypes.find(t => t.type === 'skier').chaseSpeed = 1.5;
+
+            updateScore();
+            hideMessage();
+
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            gameLoop();
+        }
+
+
+        function endGame() {
+            console.log("Game Over!");
+            gameOver = true;
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            showMessage(`Game Over! Score: ${score}`);
+        }
+
+
+        // --- Event Listeners ---
+        function handleKeyDown(e) {
+             if ((gameOver || !animationFrameId) && messageBox.style.display === 'block' && messageText.textContent.includes("Start")) {
+                 startGame();
+                 if (['ArrowLeft', 'ArrowRight', 'ArrowUp', ' ', 'a', 'd', 'w'].includes(e.key)) {
+                    e.preventDefault();
+                 }
+                 return;
+             }
+            if (gameOver && !messageText.textContent.includes("Start")) return;
+
+            keysPressed[e.key] = true;
+
+            if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w') {
+                e.preventDefault();
+                if (!skier.isJumping) {
+                    skier.isJumping = true;
+                    skier.jumpTimer = Date.now();
+                }
+            } else if (['ArrowLeft', 'ArrowRight', 'a', 'd'].includes(e.key)) {
+                 e.preventDefault();
+            }
+        }
+
+         function handleKeyUp(e) {
+             keysPressed[e.key] = false;
+         }
+
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        window.addEventListener('resize', resizeCanvas);
+        restartButton.addEventListener('click', startGame);
+        gameContainer.addEventListener('click', () => {
+             if (gameOver || !animationFrameId) {
+                 startGame();
+             }
+        });
+
+
+        // --- Initial Setup ---
+        resizeCanvas();
+        showMessage("Click or Press Key to Start");
+        clearCanvas();
+        drawSkier();
+
+    </script>
+<br>
+<a href="Index.html"> Back to Scratch</a>
+</body>
+</html>
